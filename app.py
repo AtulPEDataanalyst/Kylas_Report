@@ -443,128 +443,175 @@ PE_MUTED  = "#6B7A99"
 
 def to_excel(processed_df, pivot_df, summary_top, owner_counts, stage_counts) -> bytes:
     output = BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+    # FIX: changed engine from "xlsxwriter" to "openpyxl" to avoid missing module error
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
         wb = writer.book
 
-        # ── Shared formats ────────────────────────────────────────────
-        def fmt(**kw):
-            defaults = {"font_name": "Calibri", "font_size": 10, "valign": "vcenter"}
-            defaults.update(kw)
-            return wb.add_format(defaults)
-
-        hdr_fmt = fmt(bold=True, bg_color=PE_NAVY, font_color="#FFFFFF",
-                      border=1, border_color=PE_NAVY2, align="center", font_size=10)
-        cell_fmt  = fmt(border=1, border_color=PE_BORDER)
-        alt_fmt   = fmt(border=1, border_color=PE_BORDER, bg_color=PE_LIGHT)
-        title_fmt = fmt(bold=True, font_size=14, font_color=PE_NAVY, font_name="Calibri")
-
-        # Pivot-specific row formats
-        owner_hdr_fmt = fmt(bold=True, bg_color=PE_NAVY2, font_color="#FFFFFF",
-                            border=1, border_color=PE_NAVY, font_size=10)
-        stage_fmt     = fmt(border=1, border_color=PE_BORDER, indent=1)
-        stage_alt_fmt = fmt(border=1, border_color=PE_BORDER, bg_color=PE_LIGHT, indent=1)
-        grand_fmt     = fmt(bold=True, bg_color=PE_ORANGE, font_color="#FFFFFF",
-                            border=1, border_color="#c96010", font_size=10)
-        num_fmt       = fmt(border=1, border_color=PE_BORDER, align="center", num_format="0")
-        num_alt_fmt   = fmt(border=1, border_color=PE_BORDER, bg_color=PE_LIGHT,
-                            align="center", num_format="0")
-        num_own_fmt   = fmt(bold=True, bg_color=PE_NAVY2, font_color="#FFFFFF",
-                            border=1, border_color=PE_NAVY, align="center", num_format="0")
-        num_grand_fmt = fmt(bold=True, bg_color=PE_ORANGE, font_color="#FFFFFF",
-                            border=1, border_color="#c96010", align="center", num_format="0")
-        metric_fmt    = fmt(bold=True, bg_color="#FFF3E8", font_color=PE_NAVY,
-                            border=1, border_color="#f4c090", font_size=10)
-
         # ── Sheet 1: Processed Data ───────────────────────────────────
-        ws1 = wb.add_worksheet("Processed Data")
-        writer.sheets["Processed Data"] = ws1
-        ws1.write(0, 0, "PolicyEra – Lead Activity Processed Data", title_fmt)
-        sr = 2
-        processed_df.to_excel(writer, sheet_name="Processed Data", index=False, startrow=sr)
-        for ci, cn in enumerate(processed_df.columns):
-            ws1.write(sr, ci, cn, hdr_fmt)
-            w = max(len(str(cn)) + 2,
-                    processed_df[cn].astype(str).str.len().max() + 2 if len(processed_df) else 12)
-            ws1.set_column(ci, ci, min(w, 38))
+        processed_df.to_excel(writer, sheet_name="Processed Data", index=False, startrow=2)
+
+        ws1 = writer.sheets["Processed Data"]
+
+        from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        navy_fill   = PatternFill("solid", fgColor="0B1F4B")
+        navy2_fill  = PatternFill("solid", fgColor="112255")
+        orange_fill = PatternFill("solid", fgColor="F47B20")
+        light_fill  = PatternFill("solid", fgColor="F4F6FB")
+        white_fill  = PatternFill("solid", fgColor="FFFFFF")
+        metric_fill = PatternFill("solid", fgColor="FFF3E8")
+
+        white_font  = Font(name="Calibri", color="FFFFFF", bold=True, size=10)
+        navy_font   = Font(name="Calibri", color="0B1F4B", size=10)
+        bold_navy   = Font(name="Calibri", color="0B1F4B", bold=True, size=10)
+        title_font  = Font(name="Calibri", color="0B1F4B", bold=True, size=14)
+        muted_font  = Font(name="Calibri", color="6B7A99", italic=True, size=9)
+        bold_white  = Font(name="Calibri", color="FFFFFF", bold=True, size=10)
+
+        thin = Side(style="thin", color="D8E2F3")
+        thin_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        center_align = Alignment(horizontal="center", vertical="center")
+        left_align   = Alignment(horizontal="left",   vertical="center")
+
+        # Title
+        ws1.cell(1, 1, "PolicyEra – Lead Activity Processed Data").font = title_font
+
+        # Header row (row 3 = startrow+1 in 1-based)
+        for ci, cn in enumerate(processed_df.columns, start=1):
+            cell = ws1.cell(3, ci, cn)
+            cell.fill      = navy_fill
+            cell.font      = white_font
+            cell.alignment = center_align
+            cell.border    = thin_border
+            col_len = max(len(str(cn)) + 2,
+                          processed_df[cn].astype(str).str.len().max() + 2 if len(processed_df) else 12)
+            ws1.column_dimensions[get_column_letter(ci)].width = min(col_len, 38)
+
+        # Data rows
         for ri in range(len(processed_df)):
-            rfmt = alt_fmt if ri % 2 == 0 else cell_fmt
+            fill = light_fill if ri % 2 == 0 else white_fill
             for ci in range(len(processed_df.columns)):
                 v = processed_df.iloc[ri, ci]
-                ws1.write(ri + sr + 1, ci, "" if pd.isna(v) else v, rfmt)
+                cell = ws1.cell(ri + 4, ci + 1, "" if pd.isna(v) else v)
+                cell.fill      = fill
+                cell.font      = navy_font
+                cell.border    = thin_border
+                cell.alignment = left_align
 
-        # ── Sheet 2: Pivot Report (grouped, colour-coded) ─────────────
-        ws2 = wb.add_worksheet("Pivot Report")
-        writer.sheets["Pivot Report"] = ws2
-        ws2.write(0, 0, "PolicyEra – Lead Activity Pivot (Future Task = No)", title_fmt)
-        ws2.write(1, 0, f"Owner × Pipeline Stage  |  Activity Buckets  |  Generated: {date.today()}",
-                  fmt(italic=True, font_color=PE_MUTED, font_size=9))
-        sr2 = 3
+        # ── Sheet 2: Pivot Report ─────────────────────────────────────
+        pivot_df.to_excel(writer, sheet_name="Pivot Report", index=False, startrow=3)
+        ws2 = writer.sheets["Pivot Report"]
+
+        ws2.cell(1, 1, "PolicyEra – Lead Activity Pivot (Future Task = No)").font = title_font
+        ws2.cell(2, 1, f"Owner × Pipeline Stage  |  Activity Buckets  |  Generated: {date.today()}").font = muted_font
 
         pivot_cols = list(pivot_df.columns)
-        # Identify column positions
-        owner_ci  = pivot_cols.index(pivot_df.columns[0])
-        stage_ci  = pivot_cols.index(pivot_df.columns[1])
-        num_start = 2  # bucket columns start at col index 2
+        num_start  = 2  # bucket columns start at col index 2 (0-based), so col 3 (1-based)
 
-        # Header row
-        for ci, cn in enumerate(pivot_cols):
-            ws2.write(sr2, ci, cn, hdr_fmt)
-            ws2.set_column(ci, ci, 18 if ci >= num_start else 22)
+        # Header row (row 4)
+        for ci, cn in enumerate(pivot_cols, start=1):
+            cell = ws2.cell(4, ci, cn)
+            cell.fill      = navy_fill
+            cell.font      = white_font
+            cell.alignment = center_align
+            cell.border    = thin_border
+            ws2.column_dimensions[get_column_letter(ci)].width = 18 if ci > 2 else 22
 
         stage_count = 0
         for ri, row in pivot_df.iterrows():
-            xr = ri + sr2 + 1
+            xr = ri + 5  # 1-based row (header at 4, data starts at 5)
             row_type = "grand" if row[pivot_cols[0]] == "GRAND TOTAL" else \
                        ("owner" if row[pivot_cols[1]] == "── TOTAL" else "stage")
 
             if row_type == "owner":
-                tf, nf = owner_hdr_fmt, num_own_fmt
+                text_fill, text_font = navy2_fill, bold_white
+                num_fill,  num_font  = navy2_fill, bold_white
             elif row_type == "grand":
-                tf, nf = grand_fmt, num_grand_fmt
+                text_fill, text_font = orange_fill, bold_white
+                num_fill,  num_font  = orange_fill, bold_white
             else:
                 stage_count += 1
-                tf = stage_fmt if stage_count % 2 == 1 else stage_alt_fmt
-                nf = num_fmt   if stage_count % 2 == 1 else num_alt_fmt
+                is_alt = stage_count % 2 == 0
+                text_fill = light_fill if is_alt else white_fill
+                text_font = navy_font
+                num_fill  = light_fill if is_alt else white_fill
+                num_font  = navy_font
 
-            for ci, cn in enumerate(pivot_cols):
+            for ci, cn in enumerate(pivot_cols, start=1):
                 v = row[cn]
                 if pd.isna(v):
-                    v = ""
-                if ci < num_start:
-                    ws2.write(xr, ci, v, tf)
+                    v = "" if ci <= 2 else 0
+                cell = ws2.cell(xr, ci, v)
+                if ci <= 2:
+                    cell.fill      = text_fill
+                    cell.font      = text_font
+                    cell.alignment = left_align
                 else:
-                    ws2.write(xr, ci, v if v != "" else 0, nf)
+                    cell.fill      = num_fill
+                    cell.font      = num_font
+                    cell.alignment = center_align
+                cell.border = thin_border
 
         # ── Sheet 3: Summary Statistics ────────────────────────────────
-        ws3 = wb.add_worksheet("Summary Statistics")
-        writer.sheets["Summary Statistics"] = ws3
-        ws3.write(0, 0, "PolicyEra – Lead Activity Summary Statistics", title_fmt)
-        ws3.set_column(0, 0, 30)
-        ws3.set_column(1, 1, 18)
+        summary_top.to_excel(writer, sheet_name="Summary Statistics", index=False, startrow=2)
+        ws3 = writer.sheets["Summary Statistics"]
 
-        r = 2
-        for _, row in summary_top.iterrows():
-            ws3.write(r, 0, row["Metric"], metric_fmt)
-            ws3.write(r, 1, row["Value"], cell_fmt)
-            r += 1
+        ws3.cell(1, 1, "PolicyEra – Lead Activity Summary Statistics").font = title_font
+        ws3.column_dimensions["A"].width = 30
+        ws3.column_dimensions["B"].width = 18
 
-        r += 1
-        ws3.write(r, 0, "Owner-wise Lead Count", title_fmt); r += 1
-        ws3.write(r, 0, "Owner", hdr_fmt); ws3.write(r, 1, "Lead Count", hdr_fmt); r += 1
+        # Summary top header + rows
+        ws3.cell(3, 1, "Metric").fill   = navy_fill
+        ws3.cell(3, 1).font             = white_font
+        ws3.cell(3, 1).border           = thin_border
+        ws3.cell(3, 2, "Value").fill    = navy_fill
+        ws3.cell(3, 2).font             = white_font
+        ws3.cell(3, 2).border           = thin_border
+
+        for i, (_, row) in enumerate(summary_top.iterrows()):
+            r = i + 4
+            c1 = ws3.cell(r, 1, row["Metric"])
+            c1.fill = metric_fill; c1.font = bold_navy; c1.border = thin_border
+            c2 = ws3.cell(r, 2, row["Value"])
+            c2.border = thin_border; c2.font = navy_font
+
+        base_r = len(summary_top) + 6
+
+        ws3.cell(base_r, 1, "Owner-wise Lead Count").font = title_font
+        base_r += 1
+        ws3.cell(base_r, 1, "Owner").fill      = navy_fill
+        ws3.cell(base_r, 1).font               = white_font
+        ws3.cell(base_r, 1).border             = thin_border
+        ws3.cell(base_r, 2, "Lead Count").fill = navy_fill
+        ws3.cell(base_r, 2).font               = white_font
+        ws3.cell(base_r, 2).border             = thin_border
+        base_r += 1
         for i, (_, row) in enumerate(owner_counts.iterrows()):
-            rf = alt_fmt if i % 2 == 0 else cell_fmt
-            ws3.write(r, 0, row["Owner"], rf)
-            ws3.write(r, 1, row["Lead Count"], rf)
-            r += 1
+            fill = light_fill if i % 2 == 0 else white_fill
+            c1 = ws3.cell(base_r, 1, row["Owner"])
+            c1.fill = fill; c1.font = navy_font; c1.border = thin_border
+            c2 = ws3.cell(base_r, 2, row["Lead Count"])
+            c2.fill = fill; c2.font = navy_font; c2.border = thin_border
+            base_r += 1
 
-        r += 1
-        ws3.write(r, 0, "Pipeline Stage Count", title_fmt); r += 1
-        ws3.write(r, 0, "Pipeline Stage", hdr_fmt); ws3.write(r, 1, "Lead Count", hdr_fmt); r += 1
+        base_r += 1
+        ws3.cell(base_r, 1, "Pipeline Stage Count").font = title_font
+        base_r += 1
+        ws3.cell(base_r, 1, "Pipeline Stage").fill = navy_fill
+        ws3.cell(base_r, 1).font                   = white_font
+        ws3.cell(base_r, 1).border                 = thin_border
+        ws3.cell(base_r, 2, "Lead Count").fill     = navy_fill
+        ws3.cell(base_r, 2).font                   = white_font
+        ws3.cell(base_r, 2).border                 = thin_border
+        base_r += 1
         for i, (_, row) in enumerate(stage_counts.iterrows()):
-            rf = alt_fmt if i % 2 == 0 else cell_fmt
-            ws3.write(r, 0, row["Pipeline Stage"], rf)
-            ws3.write(r, 1, row["Lead Count"], rf)
-            r += 1
+            fill = light_fill if i % 2 == 0 else white_fill
+            c1 = ws3.cell(base_r, 1, row["Pipeline Stage"])
+            c1.fill = fill; c1.font = navy_font; c1.border = thin_border
+            c2 = ws3.cell(base_r, 2, row["Lead Count"])
+            c2.fill = fill; c2.font = navy_font; c2.border = thin_border
+            base_r += 1
 
     return output.getvalue()
 
